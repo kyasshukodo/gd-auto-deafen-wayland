@@ -5,13 +5,9 @@
 #include <Geode/Bindings.hpp>
 #include <Geode/modify/MenuLayer.hpp>
 #include <Geode/modify/PlayLayer.hpp>
+#include <Geode/loader/Mod.hpp>  // for Mod::get()->getSettingValue
 
 using namespace geode::prelude;
-
-// ---------------- Simple config ----------------
-
-// Low threshold so it is easy to test.
-constexpr float DEAFEN_THRESHOLD_PERCENT = 5.0f;
 
 // ---------------- Networking helper ----------------
 
@@ -96,7 +92,7 @@ public:
     }
 };
 
-// ---------------- PlayLayer hook (percent-based deafen) ----------------
+// ---------------- PlayLayer hook (percent-based deafen with setting) ----------------
 
 class $modify(MyPlayLayer, PlayLayer) {
 public:
@@ -109,9 +105,12 @@ public:
         // Call original implementation first
         PlayLayer::postUpdate(dt);
 
-        // Fields are managed by Geode; use m_fields->... directly
         // Current level percent (0–100)
         float percent = this->getCurrentPercent();
+
+        // Read current threshold from settings (float setting, we read as double)
+        double threshold = Mod::get()->getSettingValue<double>("deafen-percent");
+        float thresholdF = static_cast<float>(threshold);
 
         // If already triggered this attempt, do nothing
         if (m_fields->hasDeafened) {
@@ -119,11 +118,11 @@ public:
         }
 
         // Trigger once when crossing threshold
-        if (percent >= DEAFEN_THRESHOLD_PERCENT) {
+        if (percent >= thresholdF) {
             log::info(
                 "AutoDeafen: percent {} >= threshold {} – sending DEAFEN",
                 percent,
-                DEAFEN_THRESHOLD_PERCENT
+                thresholdF
             );
 
             if (triggerDeafen()) {

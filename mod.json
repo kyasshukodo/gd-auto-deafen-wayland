@@ -1,17 +1,37 @@
 {
-	"geode": "4.9.0",
-	"gd": {
-		"win": "2.2074",
-		"android": "2.2074",
-		"mac": "2.2074",
-		"ios": "2.2074"
-	},
-	"id": "nyanko.auto-deafen-wayland",
-	"name": "Auto Deafen Wayland",
-	"version": "v1.0.0",
-	"developer": "nyanko",
-	"description": "",
-	"dependencies": {
-		"geode.node-ids": ">=v1.20.0"
-	}
+  "id": "kyasshukodo.gd-auto-deafen-wayland",
+  "name": "GD Auto Deafen (Wayland)",
+  "version": "1.0.0",
+
+  "developer": "kyasshukodo",
+  "description": "Automatically deafens Discord when you reach a configurable percent in a Geometry Dash level, using a Wayland helper and Geode mod integration.",
+
+  "geode": "4.9.0",
+
+  "gd": {
+    "win": "2.2074"
+  },
+
+  "settings": {
+    "title-main": {
+      "type": "title",
+      "name": "Auto Deafen Settings"
+    },
+    "deafen-percent": {
+      "type": "float",
+      "name": "Deafen at percent",
+      "description": "When reached in a level, send DEAFEN to the helper.",
+      "default": 5,
+      "min": 0,
+      "max": 100,
+      "controls": {
+        "arrows": true,
+        "arrow-step": 1,
+        "big-arrows": false,
+        "slider": true,
+        "slider-step": 1,
+        "input": true
+      }
+    }
+  }
 }
