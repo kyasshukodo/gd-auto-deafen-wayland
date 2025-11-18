@@ -94,7 +94,7 @@ public:
     }
 };
 
-// ---------------- PlayLayer hook (percent-based deafen + undeafen on death) ----------------
+// ---------------- PlayLayer hook ----------------
 
 class $modify(MyPlayLayer, PlayLayer) {
 public:
@@ -104,6 +104,16 @@ public:
 
     void postUpdate(float dt) {
         PlayLayer::postUpdate(dt);
+
+        // Respect the "Active in practice mode" setting
+        bool activeInPractice =
+            Mod::get()->getSettingValue<bool>("active-in-practice");
+
+        // If the mod is disabled in practice and this PlayLayer is in practice,
+        // skip all deafen logic.
+        if (!activeInPractice && this->m_isPracticeMode) {
+            return;
+        }
 
         // Current level percent (0–100)
         float percent = this->getCurrentPercent();

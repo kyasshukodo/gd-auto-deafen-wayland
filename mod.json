@@ -38,6 +38,12 @@
       "name": "Undeafen on death",
       "description": "If enabled, send DEAFEN again (toggle) when the attempt resets after death.",
       "default": true
+    },
+    "active-in-practice": {
+      "type": "bool",
+      "name": "Active in practice mode",
+      "description": "If disabled, AutoDeafen does nothing while in practice mode.",
+      "default": true
     }
   }
 }
