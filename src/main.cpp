@@ -19,43 +19,51 @@ bool sendHelperCommand(const char* cmd) {
         return false;
     }
 
-    SOCKET sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (sock == INVALID_SOCKET) {
-        log::error("AutoDeafen: socket() failed");
-        WSACleanup();
-        return false;
+    // Ensure WSACleanup is called on all exit paths
+    bool success = false;
+    SOCKET sock = INVALID_SOCKET;
+
+    do {
+        sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (sock == INVALID_SOCKET) {
+            log::error("AutoDeafen: socket() failed");
+            break;
+        }
+
+        sockaddr_in addr{};
+        addr.sin_family      = AF_INET;
+        addr.sin_port        = htons(44555);
+        addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+
+        log::info("AutoDeafen: connecting to helper at 127.0.0.1:44555");
+
+        if (connect(sock, (sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
+            log::error("AutoDeafen: connect() to helper failed");
+            break;
+        }
+
+        // Send just the command and a newline, e.g. "DEAFEN\n"
+        std::string line = cmd;
+        line.push_back('\n');
+
+        int len  = static_cast<int>(line.size());
+        int sent = send(sock, line.c_str(), len, 0);
+
+        if (sent != len) {
+            log::error("AutoDeafen: send() incomplete (sent {} of {})", sent, len);
+            break;
+        }
+
+        log::info("AutoDeafen: sent line '{}' to helper", line);
+        success = true;
+    } while (false);
+
+    if (sock != INVALID_SOCKET) {
+        closesocket(sock);
     }
-
-    sockaddr_in addr{};
-    addr.sin_family      = AF_INET;
-    addr.sin_port        = htons(44555);
-    addr.sin_addr.s_addr = inet_addr("127.0.0.1");
-
-    log::info("AutoDeafen: connecting to helper at 127.0.0.1:44555");
-
-    if (connect(sock, (sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
-        log::error("AutoDeafen: connect() to helper failed");
-        WSACleanup();
-        return false;
-    }
-
-    // Send just the command and a newline, e.g. "DEAFEN\n"
-    std::string line = cmd;
-    line.push_back('\n');
-
-    int len  = static_cast<int>(line.size());
-    int sent = send(sock, line.c_str(), len, 0);
-
-    closesocket(sock);
     WSACleanup();
 
-    if (sent != len) {
-        log::error("AutoDeafen: send() incomplete (sent {} of {})", sent, len);
-        return false;
-    }
-
-    log::info("AutoDeafen: sent line '{}' to helper", line);
-    return true;
+    return success;
 }
 
 // Trigger deafen / undeafen (toggle in Discord)
@@ -102,13 +110,33 @@ public:
         bool initializedRun              = false; // sampled initial percent yet
         bool isStartPosRun               = false; // this attempt started from > 0%
         bool wantDeafenOnNextStartPosRun = false; // re-deafen immediately on next StartPos respawn
+        
+        // Cached settings (updated each run)
+        bool cachedActiveInPractice = false;
+        bool cachedActiveInStartPos = false;
+        bool cachedUndeafenOnDeath  = false;
     };
+
+    void refreshSettings() {
+        m_fields->cachedActiveInPractice = Mod::get()->getSettingValue<bool>("active-in-practice");
+        m_fields->cachedActiveInStartPos = Mod::get()->getSettingValue<bool>("active-in-startpos");
+        m_fields->cachedUndeafenOnDeath  = Mod::get()->getSettingValue<bool>("undeafen-on-death");
+    }
+
+    void resetAttemptState() {
+        m_fields->hasDeafenedThisAttempt = false;
+        m_fields->initializedRun         = false;
+        m_fields->isStartPosRun          = false;
+    }
 
     void postUpdate(float dt) {
         PlayLayer::postUpdate(dt);
 
         // --- Classify this attempt on the first frame ---
         if (!m_fields->initializedRun) {
+            // Refresh settings at the start of each attempt
+            refreshSettings();
+            
             float initialPercent = this->getCurrentPercent();
             m_fields->isStartPosRun = (initialPercent > 0.0f);
             m_fields->initializedRun = true;
@@ -120,10 +148,7 @@ public:
             );
 
             // StartPos re-deafen on respawn:
-            bool activeInStartPos =
-                Mod::get()->getSettingValue<bool>("active-in-startpos");
-
-            if (activeInStartPos &&
+            if (m_fields->cachedActiveInStartPos &&
                 m_fields->isStartPosRun &&
                 m_fields->wantDeafenOnNextStartPosRun) {
 
@@ -139,18 +164,13 @@ public:
 
         // --- Respect practice and startpos settings for new deafen actions ---
 
-        bool activeInPractice =
-            Mod::get()->getSettingValue<bool>("active-in-practice");
-        bool activeInStartPos =
-            Mod::get()->getSettingValue<bool>("active-in-startpos");
-
         // If disabled in practice and this is a practice run, do nothing.
-        if (!activeInPractice && this->m_isPracticeMode) {
+        if (!m_fields->cachedActiveInPractice && this->m_isPracticeMode) {
             return;
         }
 
         // If disabled in startpos runs and this attempt started from >0%, do nothing.
-        if (!activeInStartPos && m_fields->isStartPosRun) {
+        if (!m_fields->cachedActiveInStartPos && m_fields->isStartPosRun) {
             return;
         }
 
@@ -187,14 +207,9 @@ public:
     void resetLevel() {
         log::info("AutoDeafen: resetLevel called");
 
-        bool undeafenOnDeath =
-            Mod::get()->getSettingValue<bool>("undeafen-on-death");
-        bool activeInStartPos =
-            Mod::get()->getSettingValue<bool>("active-in-startpos");
-
         // If we deafened this attempt and undeafen-on-death is enabled:
-        if (undeafenOnDeath && m_fields->hasDeafenedThisAttempt) {
-            if (m_fields->isStartPosRun && activeInStartPos) {
+        if (m_fields->cachedUndeafenOnDeath && m_fields->hasDeafenedThisAttempt) {
+            if (m_fields->isStartPosRun && m_fields->cachedActiveInStartPos) {
                 // StartPos: undeafen at reset and schedule re-deafen
                 // on next StartPos respawn.
                 log::info("AutoDeafen: StartPos run - undeafening on reset and scheduling re-deafen on respawn");
@@ -211,9 +226,7 @@ public:
         // Reset per-attempt state for the next run.
         // NOTE: we intentionally DO NOT clear wantDeafenOnNextStartPosRun here;
         // it is consumed at the beginning of the next StartPos run in postUpdate.
-        m_fields->hasDeafenedThisAttempt = false;
-        m_fields->initializedRun         = false;
-        m_fields->isStartPosRun          = false;
+        resetAttemptState();
 
         PlayLayer::resetLevel();
     }
@@ -222,9 +235,7 @@ public:
         log::info("AutoDeafen: levelComplete – resetting state");
         // On completion, we just clear all state. If you ever want different
         // behavior (e.g. auto-undeafen on completion) we can add a setting.
-        m_fields->hasDeafenedThisAttempt      = false;
-        m_fields->initializedRun              = false;
-        m_fields->isStartPosRun               = false;
+        resetAttemptState();
         m_fields->wantDeafenOnNextStartPosRun = false;
 
         PlayLayer::levelComplete();
