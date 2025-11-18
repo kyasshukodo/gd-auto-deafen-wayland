@@ -50,7 +50,11 @@ bool sendHelperCommand(const char* cmd) {
         int sent = send(sock, line.c_str(), len, 0);
 
         if (sent != len) {
-            log::error("AutoDeafen: send() incomplete (sent {} of {})", sent, len);
+            log::error(
+                "AutoDeafen: send() incomplete (sent {} of {})",
+                       sent,
+                       len
+            );
             break;
         }
 
@@ -118,9 +122,12 @@ public:
     };
 
     void refreshSettings() {
-        m_fields->cachedActiveInPractice = Mod::get()->getSettingValue<bool>("active-in-practice");
-        m_fields->cachedActiveInStartPos = Mod::get()->getSettingValue<bool>("active-in-startpos");
-        m_fields->cachedUndeafenOnDeath  = Mod::get()->getSettingValue<bool>("undeafen-on-death");
+        m_fields->cachedActiveInPractice =
+        Mod::get()->getSettingValue<bool>("active-in-practice");
+        m_fields->cachedActiveInStartPos =
+        Mod::get()->getSettingValue<bool>("active-in-startpos");
+        m_fields->cachedUndeafenOnDeath =
+        Mod::get()->getSettingValue<bool>("undeafen-on-death");
     }
 
     void resetAttemptState() {
@@ -186,7 +193,8 @@ public:
         float percent = this->getCurrentPercent();
 
         // Threshold from settings
-        double threshold = Mod::get()->getSettingValue<double>("deafen-percent");
+        double threshold =
+        Mod::get()->getSettingValue<double>("deafen-percent");
         float thresholdF = static_cast<float>(threshold);
 
         if (percent >= thresholdF) {
@@ -209,11 +217,16 @@ public:
     void destroyPlayer(PlayerObject* player, GameObject* object) {
         log::info("AutoDeafen: destroyPlayer (death) called");
 
-        if (m_fields->cachedUndeafenOnDeath && m_fields->hasDeafenedThisAttempt) {
+        if (m_fields->cachedUndeafenOnDeath &&
+            m_fields->hasDeafenedThisAttempt) {
+
             if (m_fields->isStartPosRun && m_fields->cachedActiveInStartPos) {
                 // StartPos: undeafen exactly on death and schedule re-deafen
                 // on next StartPos respawn.
-                log::info("AutoDeafen: StartPos run - undeafening on death and scheduling re-deafen on respawn");
+                log::info(
+                    "AutoDeafen: StartPos run - undeafening on death and "
+                    "scheduling re-deafen on respawn"
+                );
                 if (triggerDeafen()) {
                     m_fields->wantDeafenOnNextStartPosRun = true;
                 }
@@ -222,10 +235,10 @@ public:
                 log::info("AutoDeafen: normal run - undeafening on death");
                 triggerDeafen();
             }
-        }
+            }
 
-        // Always call the original behavior
-        PlayLayer::destroyPlayer(player, object);
+            // Always call the original behavior
+            PlayLayer::destroyPlayer(player, object);
     }
 
     void resetLevel() {
@@ -242,6 +255,7 @@ public:
 
     void levelComplete() {
         log::info("AutoDeafen: levelComplete – resetting state");
+
         // On completion, we just clear all state. If you ever want different
         // behavior (e.g. auto-undeafen on completion) we can add a setting.
         resetAttemptState();
