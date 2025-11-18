@@ -4,36 +4,41 @@
 #include <Geode/Geode.hpp>
 #include <Geode/Bindings.hpp>
 #include <Geode/modify/MenuLayer.hpp>
+#include <Geode/modify/PlayLayer.hpp>
 
 using namespace geode::prelude;
 
-// --- Networking helper ---
+// ---------------- Simple config ----------------
+
+// Low threshold so it is easy to test.
+constexpr float DEAFEN_THRESHOLD_PERCENT = 5.0f;
+
+// ---------------- Networking helper ----------------
 
 bool sendHelperCommand(const char* cmd) {
     WSADATA wsaData;
     // Winsock 1.x init
     if (WSAStartup(MAKEWORD(1, 1), &wsaData) != 0) {
-        log::error("WSAStartup failed");
+        log::error("AutoDeafen: WSAStartup failed");
         return false;
     }
 
     SOCKET sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (sock == INVALID_SOCKET) {
-        log::error("socket() failed");
+        log::error("AutoDeafen: socket() failed");
         WSACleanup();
         return false;
     }
 
     sockaddr_in addr{};
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(44555);
-    // 127.0.0.1
+    addr.sin_family      = AF_INET;
+    addr.sin_port        = htons(44555);
     addr.sin_addr.s_addr = inet_addr("127.0.0.1");
 
-    log::info("Attempting to connect to helper at 127.0.0.1:44555");
+    log::info("AutoDeafen: connecting to helper at 127.0.0.1:44555");
 
     if (connect(sock, (sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
-        log::error("connect() to helper failed");
+        log::error("AutoDeafen: connect() to helper failed");
         closesocket(sock);
         WSACleanup();
         return false;
@@ -42,80 +47,104 @@ bool sendHelperCommand(const char* cmd) {
     std::string msg = cmd;
     msg.push_back('\n');
 
-    int len = static_cast<int>(msg.size());
+    int len  = static_cast<int>(msg.size());
     int sent = send(sock, msg.c_str(), len, 0);
 
     closesocket(sock);
     WSACleanup();
 
     if (sent != len) {
-        log::error("send() incomplete: sent {} of {}", sent, len);
+        log::error("AutoDeafen: send() incomplete (sent {} of {})", sent, len);
         return false;
     }
 
-    log::info("Sent command '{}' to helper successfully", cmd);
+    log::info("AutoDeafen: sent '{}' to helper", cmd);
     return true;
 }
 
 bool triggerDeafen() {
     bool ok = sendHelperCommand("DEAFEN");
     if (ok) {
-        log::info("triggerDeafen: success");
+        log::info("AutoDeafen: triggerDeafen success");
     } else {
-        log::error("triggerDeafen: failed");
+        log::error("AutoDeafen: triggerDeafen failed");
     }
     return ok;
 }
 
-// --- MenuLayer hook ---
+// ---------------- MenuLayer hook (ready indicator) ----------------
 
 class $modify(MyMenuLayer, MenuLayer) {
 public:
     bool init() {
-        // Always call base first
         if (!MenuLayer::init()) {
             return false;
         }
 
-        log::info("MyMenuLayer::init called");
+        log::info("AutoDeafen: MyMenuLayer::init (mod loaded)");
 
-        // Add a simple label in the middle so we visually know the mod loaded
         auto winSize = CCDirector::get()->getWinSize();
-        auto label = CCLabelBMFont::create("AutoDeafen Test", "bigFont.fnt");
+        auto label   = CCLabelBMFont::create("AutoDeafen: Ready", "bigFont.fnt");
         if (label) {
             label->setPosition(winSize / 2);
             this->addChild(label);
         } else {
-            log::warn("Failed to create test label");
+            log::warn("AutoDeafen: failed to create Ready label");
         }
-
-        // Try to contact helper and show result in a popup
-        bool ok = triggerDeafen();
-        if (ok) {
-            FLAlertLayer::create(
-                "AutoDeafen",
-                "Sent DEAFEN to helper (success).",
-                "OK"
-            )->show();
-        } else {
-            FLAlertLayer::create(
-                "AutoDeafen",
-                "Failed to contact helper.\nIs gd_deafen_helper.py running?",
-                "OK"
-            )->show();
-        }
-
-        // Also log a debug message about children count
-        log::debug(
-            "MyMenuLayer::init hook: MenuLayer now has {} children.",
-            this->getChildrenCount()
-        );
 
         return true;
     }
+};
 
-    // Keep the button example if you want; it's optional for now
-    void onMyButton(CCObject*) {
-        FLAlertLayer::create("Geode", "Hello from my custom mod!", "OK")->show();
+// ---------------- PlayLayer hook (percent-based deafen) ----------------
+
+class $modify(MyPlayLayer, PlayLayer) {
+public:
+    struct Fields {
+        bool hasDeafened = false;  // once per attempt
+    };
+
+    // Called every frame after the base PlayLayer update
+    void postUpdate(float dt) {
+        // Call original implementation first
+        PlayLayer::postUpdate(dt);
+
+        // Fields are managed by Geode; use m_fields->... directly
+        // Current level percent (0–100)
+        float percent = this->getCurrentPercent();
+
+        // If already triggered this attempt, do nothing
+        if (m_fields->hasDeafened) {
+            return;
+        }
+
+        // Trigger once when crossing threshold
+        if (percent >= DEAFEN_THRESHOLD_PERCENT) {
+            log::info(
+                "AutoDeafen: percent {} >= threshold {} – sending DEAFEN",
+                percent,
+                DEAFEN_THRESHOLD_PERCENT
+            );
+
+            if (triggerDeafen()) {
+                m_fields->hasDeafened = true;
+            } else {
+                log::error("AutoDeafen: triggerDeafen failed (helper unreachable?)");
+            }
+        }
+    }
+
+    // Reset per-attempt state when the level is reset
+    void resetLevel() {
+        log::info("AutoDeafen: resetLevel – resetting hasDeafened");
+        m_fields->hasDeafened = false;
+        PlayLayer::resetLevel();
+    }
+
+    // Also reset when the level completes
+    void levelComplete() {
+        log::info("AutoDeafen: levelComplete – resetting hasDeafened");
+        m_fields->hasDeafened = false;
+        PlayLayer::levelComplete();
     }
 };
