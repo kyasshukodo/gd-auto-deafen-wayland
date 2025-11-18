@@ -110,7 +110,7 @@ public:
         bool initializedRun              = false; // sampled initial percent yet
         bool isStartPosRun               = false; // this attempt started from > 0%
         bool wantDeafenOnNextStartPosRun = false; // re-deafen immediately on next StartPos respawn
-        
+
         // Cached settings (updated each run)
         bool cachedActiveInPractice = false;
         bool cachedActiveInStartPos = false;
@@ -136,7 +136,7 @@ public:
         if (!m_fields->initializedRun) {
             // Refresh settings at the start of each attempt
             refreshSettings();
-            
+
             float initialPercent = this->getCurrentPercent();
             m_fields->isStartPosRun = (initialPercent > 0.0f);
             m_fields->initializedRun = true;
@@ -153,13 +153,13 @@ public:
                 m_fields->wantDeafenOnNextStartPosRun) {
 
                 log::info("AutoDeafen: re-deafening on StartPos respawn");
-                if (triggerDeafen()) {
-                    // Mark that we've already deafened this attempt,
-                    // so we do NOT press again at the threshold.
-                    m_fields->hasDeafenedThisAttempt = true;
-                }
-                m_fields->wantDeafenOnNextStartPosRun = false;
+            if (triggerDeafen()) {
+                // Mark that we've already deafened this attempt,
+                // so we do NOT press again at the threshold.
+                m_fields->hasDeafenedThisAttempt = true;
             }
+            m_fields->wantDeafenOnNextStartPosRun = false;
+                }
         }
 
         // --- Respect practice and startpos settings for new deafen actions ---
@@ -204,28 +204,37 @@ public:
         }
     }
 
-    void resetLevel() {
-        log::info("AutoDeafen: resetLevel called");
+    // ---- Exact undeafen-on-death hook ----
+    // This is called when the player dies.
+    void destroyPlayer(PlayerObject* player, GameObject* object) {
+        log::info("AutoDeafen: destroyPlayer (death) called");
 
-        // If we deafened this attempt and undeafen-on-death is enabled:
         if (m_fields->cachedUndeafenOnDeath && m_fields->hasDeafenedThisAttempt) {
             if (m_fields->isStartPosRun && m_fields->cachedActiveInStartPos) {
-                // StartPos: undeafen at reset and schedule re-deafen
+                // StartPos: undeafen exactly on death and schedule re-deafen
                 // on next StartPos respawn.
-                log::info("AutoDeafen: StartPos run - undeafening on reset and scheduling re-deafen on respawn");
+                log::info("AutoDeafen: StartPos run - undeafening on death and scheduling re-deafen on respawn");
                 if (triggerDeafen()) {
                     m_fields->wantDeafenOnNextStartPosRun = true;
                 }
             } else {
-                // Normal run: just undeafen once at reset.
-                log::info("AutoDeafen: normal run - undeafening on reset");
+                // Normal run: just undeafen exactly on death.
+                log::info("AutoDeafen: normal run - undeafening on death");
                 triggerDeafen();
             }
         }
 
-        // Reset per-attempt state for the next run.
-        // NOTE: we intentionally DO NOT clear wantDeafenOnNextStartPosRun here;
-        // it is consumed at the beginning of the next StartPos run in postUpdate.
+        // Always call the original behavior
+        PlayLayer::destroyPlayer(player, object);
+    }
+
+    void resetLevel() {
+        log::info("AutoDeafen: resetLevel called");
+
+        // IMPORTANT: no toggling here anymore. This is purely state reset.
+        // For StartPos runs, re-deafen will happen in postUpdate() at the
+        // beginning of the next attempt if wantDeafenOnNextStartPosRun is set.
+
         resetAttemptState();
 
         PlayLayer::resetLevel();
