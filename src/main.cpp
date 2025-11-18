@@ -5,7 +5,7 @@
 #include <Geode/Bindings.hpp>
 #include <Geode/modify/MenuLayer.hpp>
 #include <Geode/modify/PlayLayer.hpp>
-#include <Geode/loader/Mod.hpp>  // for Mod::get()->getSettingValue
+#include <Geode/loader/Mod.hpp>
 
 using namespace geode::prelude;
 
@@ -40,11 +40,12 @@ bool sendHelperCommand(const char* cmd) {
         return false;
     }
 
-    std::string msg = cmd;
-    msg.push_back('\n');
+    // Send just the command and a newline, e.g. "DEAFEN\n"
+    std::string line = cmd;
+    line.push_back('\n');
 
-    int len  = static_cast<int>(msg.size());
-    int sent = send(sock, msg.c_str(), len, 0);
+    int len  = static_cast<int>(line.size());
+    int sent = send(sock, line.c_str(), len, 0);
 
     closesocket(sock);
     WSACleanup();
@@ -54,10 +55,11 @@ bool sendHelperCommand(const char* cmd) {
         return false;
     }
 
-    log::info("AutoDeafen: sent '{}' to helper", cmd);
+    log::info("AutoDeafen: sent line '{}' to helper", line);
     return true;
 }
 
+// Trigger deafen / undeafen (toggle in Discord)
 bool triggerDeafen() {
     bool ok = sendHelperCommand("DEAFEN");
     if (ok) {
@@ -92,23 +94,21 @@ public:
     }
 };
 
-// ---------------- PlayLayer hook (percent-based deafen with setting) ----------------
+// ---------------- PlayLayer hook (percent-based deafen + undeafen on death) ----------------
 
 class $modify(MyPlayLayer, PlayLayer) {
 public:
     struct Fields {
-        bool hasDeafened = false;  // once per attempt
+        bool hasDeafened = false;  // whether we deafened during this attempt
     };
 
-    // Called every frame after the base PlayLayer update
     void postUpdate(float dt) {
-        // Call original implementation first
         PlayLayer::postUpdate(dt);
 
         // Current level percent (0–100)
         float percent = this->getCurrentPercent();
 
-        // Read current threshold from settings (float setting, we read as double)
+        // Threshold from settings
         double threshold = Mod::get()->getSettingValue<double>("deafen-percent");
         float thresholdF = static_cast<float>(threshold);
 
@@ -117,7 +117,6 @@ public:
             return;
         }
 
-        // Trigger once when crossing threshold
         if (percent >= thresholdF) {
             log::info(
                 "AutoDeafen: percent {} >= threshold {} – sending DEAFEN",
@@ -133,16 +132,29 @@ public:
         }
     }
 
-    // Reset per-attempt state when the level is reset
     void resetLevel() {
-        log::info("AutoDeafen: resetLevel – resetting hasDeafened");
+        log::info("AutoDeafen: resetLevel called");
+
+        // Check setting: should we undeafen (toggle) on death / reset?
+        bool undeafenOnDeath =
+            Mod::get()->getSettingValue<bool>("undeafen-on-death");
+
+        // If we had deafened during this attempt and the option is on,
+        // send DEAFEN again to toggle back.
+        if (undeafenOnDeath && m_fields->hasDeafened) {
+            log::info("AutoDeafen: undeafen-on-death enabled and hasDeafened=true – sending DEAFEN again to undeafen");
+            triggerDeafen();
+        }
+
+        // Reset state for the next attempt
         m_fields->hasDeafened = false;
+
         PlayLayer::resetLevel();
     }
 
-    // Also reset when the level completes
     void levelComplete() {
         log::info("AutoDeafen: levelComplete – resetting hasDeafened");
+        // For now we only undeafen on death (resetLevel); here we just clear state.
         m_fields->hasDeafened = false;
         PlayLayer::levelComplete();
     }
