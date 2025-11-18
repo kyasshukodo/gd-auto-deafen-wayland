@@ -92,3 +92,4 @@ helper/__pycache__/
 *.pyc
 *.pyo
 *.pyd
+_codeql_detected_source_root
