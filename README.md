@@ -1,5 +1,11 @@
 # AutoDeafenWayland
-This is where she makes a mod.
+
+**THIS IS INTENDED PURELY FOR GEOMETRY DASH RUNNING ON WINE/PROTON WITH THE WAYLAND COMPOSITOR. THIS IS NOT EXPECTED TO WORK ON X11**
+
+* It is also important to note that this has only been tested on Arch Linux in the KDE Plasma environment, but I suspect most environments on wayland should be fine.
+
+The Megahack & Geode auto-deafen do not work in Geometry Dash on wayland. This is due to an intentional security feature which blocks global synthetic inputs.
+The purpose of this mod is to (hopefully) allow wayland users on Linux lorem ipsum dolor sit amet
 
 <img src="logo.png" width="150" alt="the mod's logo" />
 
