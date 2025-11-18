@@ -35,7 +35,6 @@ bool sendHelperCommand(const char* cmd) {
 
     if (connect(sock, (sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
         log::error("AutoDeafen: connect() to helper failed");
-        closesocket(sock);
         WSACleanup();
         return false;
     }
@@ -99,21 +98,69 @@ public:
 class $modify(MyPlayLayer, PlayLayer) {
 public:
     struct Fields {
-        bool hasDeafened = false;  // whether we deafened during this attempt
+        bool hasDeafenedThisAttempt      = false; // we deafened at least once this attempt
+        bool initializedRun              = false; // sampled initial percent yet
+        bool isStartPosRun               = false; // this attempt started from > 0%
+        bool wantDeafenOnNextStartPosRun = false; // re-deafen immediately on next StartPos respawn
     };
 
     void postUpdate(float dt) {
         PlayLayer::postUpdate(dt);
 
-        // Respect the "Active in practice mode" setting
+        // --- Classify this attempt on the first frame ---
+        if (!m_fields->initializedRun) {
+            float initialPercent = this->getCurrentPercent();
+            m_fields->isStartPosRun = (initialPercent > 0.0f);
+            m_fields->initializedRun = true;
+
+            log::info(
+                "AutoDeafen: run initialized - initialPercent={}, isStartPosRun={}",
+                initialPercent,
+                m_fields->isStartPosRun
+            );
+
+            // StartPos re-deafen on respawn:
+            bool activeInStartPos =
+                Mod::get()->getSettingValue<bool>("active-in-startpos");
+
+            if (activeInStartPos &&
+                m_fields->isStartPosRun &&
+                m_fields->wantDeafenOnNextStartPosRun) {
+
+                log::info("AutoDeafen: re-deafening on StartPos respawn");
+                if (triggerDeafen()) {
+                    // Mark that we've already deafened this attempt,
+                    // so we do NOT press again at the threshold.
+                    m_fields->hasDeafenedThisAttempt = true;
+                }
+                m_fields->wantDeafenOnNextStartPosRun = false;
+            }
+        }
+
+        // --- Respect practice and startpos settings for new deafen actions ---
+
         bool activeInPractice =
             Mod::get()->getSettingValue<bool>("active-in-practice");
+        bool activeInStartPos =
+            Mod::get()->getSettingValue<bool>("active-in-startpos");
 
-        // If the mod is disabled in practice and this PlayLayer is in practice,
-        // skip all deafen logic.
+        // If disabled in practice and this is a practice run, do nothing.
         if (!activeInPractice && this->m_isPracticeMode) {
             return;
         }
+
+        // If disabled in startpos runs and this attempt started from >0%, do nothing.
+        if (!activeInStartPos && m_fields->isStartPosRun) {
+            return;
+        }
+
+        // If we've already deafened this attempt (either at threshold or at respawn),
+        // do nothing further.
+        if (m_fields->hasDeafenedThisAttempt) {
+            return;
+        }
+
+        // --- Percent-based deafen logic ---
 
         // Current level percent (0–100)
         float percent = this->getCurrentPercent();
@@ -121,11 +168,6 @@ public:
         // Threshold from settings
         double threshold = Mod::get()->getSettingValue<double>("deafen-percent");
         float thresholdF = static_cast<float>(threshold);
-
-        // If already triggered this attempt, do nothing
-        if (m_fields->hasDeafened) {
-            return;
-        }
 
         if (percent >= thresholdF) {
             log::info(
@@ -135,7 +177,7 @@ public:
             );
 
             if (triggerDeafen()) {
-                m_fields->hasDeafened = true;
+                m_fields->hasDeafenedThisAttempt = true;
             } else {
                 log::error("AutoDeafen: triggerDeafen failed (helper unreachable?)");
             }
@@ -145,27 +187,46 @@ public:
     void resetLevel() {
         log::info("AutoDeafen: resetLevel called");
 
-        // Check setting: should we undeafen (toggle) on death / reset?
         bool undeafenOnDeath =
             Mod::get()->getSettingValue<bool>("undeafen-on-death");
+        bool activeInStartPos =
+            Mod::get()->getSettingValue<bool>("active-in-startpos");
 
-        // If we had deafened during this attempt and the option is on,
-        // send DEAFEN again to toggle back.
-        if (undeafenOnDeath && m_fields->hasDeafened) {
-            log::info("AutoDeafen: undeafen-on-death enabled and hasDeafened=true – sending DEAFEN again to undeafen");
-            triggerDeafen();
+        // If we deafened this attempt and undeafen-on-death is enabled:
+        if (undeafenOnDeath && m_fields->hasDeafenedThisAttempt) {
+            if (m_fields->isStartPosRun && activeInStartPos) {
+                // StartPos: undeafen at reset and schedule re-deafen
+                // on next StartPos respawn.
+                log::info("AutoDeafen: StartPos run - undeafening on reset and scheduling re-deafen on respawn");
+                if (triggerDeafen()) {
+                    m_fields->wantDeafenOnNextStartPosRun = true;
+                }
+            } else {
+                // Normal run: just undeafen once at reset.
+                log::info("AutoDeafen: normal run - undeafening on reset");
+                triggerDeafen();
+            }
         }
 
-        // Reset state for the next attempt
-        m_fields->hasDeafened = false;
+        // Reset per-attempt state for the next run.
+        // NOTE: we intentionally DO NOT clear wantDeafenOnNextStartPosRun here;
+        // it is consumed at the beginning of the next StartPos run in postUpdate.
+        m_fields->hasDeafenedThisAttempt = false;
+        m_fields->initializedRun         = false;
+        m_fields->isStartPosRun          = false;
 
         PlayLayer::resetLevel();
     }
 
     void levelComplete() {
-        log::info("AutoDeafen: levelComplete – resetting hasDeafened");
-        // For now we only undeafen on death (resetLevel); here we just clear state.
-        m_fields->hasDeafened = false;
+        log::info("AutoDeafen: levelComplete – resetting state");
+        // On completion, we just clear all state. If you ever want different
+        // behavior (e.g. auto-undeafen on completion) we can add a setting.
+        m_fields->hasDeafenedThisAttempt      = false;
+        m_fields->initializedRun              = false;
+        m_fields->isStartPosRun               = false;
+        m_fields->wantDeafenOnNextStartPosRun = false;
+
         PlayLayer::levelComplete();
     }
 };

@@ -44,6 +44,12 @@
       "name": "Active in practice mode",
       "description": "If disabled, AutoDeafen does nothing while in practice mode.",
       "default": true
+    },
+    "active-in-startpos": {
+      "type": "bool",
+      "name": "Active in start position runs",
+      "description": "If disabled, AutoDeafen does nothing on attempts started from a Start Position.",
+      "default": true
     }
   }
 }
