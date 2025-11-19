@@ -21,7 +21,7 @@ bool sendHelperCommand(const char* cmd) {
 
     // Ensure WSACleanup is called on all exit paths
     bool success = false;
-    SOCKET sock = INVALID_SOCKET;
+    SOCKET sock  = INVALID_SOCKET;
 
     do {
         sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -52,8 +52,8 @@ bool sendHelperCommand(const char* cmd) {
         if (sent != len) {
             log::error(
                 "AutoDeafen: send() incomplete (sent {} of {})",
-                       sent,
-                       len
+                sent,
+                len
             );
             break;
         }
@@ -115,6 +115,14 @@ public:
         bool isStartPosRun               = false; // this attempt started from > 0%
         bool wantDeafenOnNextStartPosRun = false; // re-deafen immediately on next StartPos respawn
 
+        // Anti-spam / classification
+        bool deathHandledThisAttempt         = false; // ensure undeafen-on-death runs once
+        bool startPosRedeafenHandledThisRun  = false; // ensure StartPos re-deafen runs once
+
+        // New: detect "real" progress vs. spawn/teleport behavior
+        float initialPercentForAttempt = 0.0f;
+        bool  hasProgressedBeyondSpawn = false;
+
         // Cached settings (updated each run)
         bool cachedActiveInPractice = false;
         bool cachedActiveInStartPos = false;
@@ -123,17 +131,23 @@ public:
 
     void refreshSettings() {
         m_fields->cachedActiveInPractice =
-        Mod::get()->getSettingValue<bool>("active-in-practice");
+            Mod::get()->getSettingValue<bool>("active-in-practice");
         m_fields->cachedActiveInStartPos =
-        Mod::get()->getSettingValue<bool>("active-in-startpos");
+            Mod::get()->getSettingValue<bool>("active-in-startpos");
         m_fields->cachedUndeafenOnDeath =
-        Mod::get()->getSettingValue<bool>("undeafen-on-death");
+            Mod::get()->getSettingValue<bool>("undeafen-on-death");
     }
 
     void resetAttemptState() {
-        m_fields->hasDeafenedThisAttempt = false;
-        m_fields->initializedRun         = false;
-        m_fields->isStartPosRun          = false;
+        m_fields->hasDeafenedThisAttempt      = false;
+        m_fields->initializedRun              = false;
+        m_fields->isStartPosRun               = false;
+        m_fields->deathHandledThisAttempt     = false;
+        m_fields->startPosRedeafenHandledThisRun = false;
+        m_fields->initialPercentForAttempt    = 0.0f;
+        m_fields->hasProgressedBeyondSpawn    = false;
+        // NOTE: we intentionally do NOT reset wantDeafenOnNextStartPosRun here;
+        // it is used across attempts (set on death, consumed on next StartPos respawn).
     }
 
     void postUpdate(float dt) {
@@ -145,8 +159,10 @@ public:
             refreshSettings();
 
             float initialPercent = this->getCurrentPercent();
-            m_fields->isStartPosRun = (initialPercent > 0.0f);
-            m_fields->initializedRun = true;
+            m_fields->initialPercentForAttempt = initialPercent;
+            m_fields->isStartPosRun            = (initialPercent > 0.0f);
+            m_fields->initializedRun           = true;
+            m_fields->hasProgressedBeyondSpawn = false;
 
             log::info(
                 "AutoDeafen: run initialized - initialPercent={}, isStartPosRun={}",
@@ -154,19 +170,32 @@ public:
                 m_fields->isStartPosRun
             );
 
-            // StartPos re-deafen on respawn:
+            // StartPos re-deafen on respawn (one time per attempt)
             if (m_fields->cachedActiveInStartPos &&
                 m_fields->isStartPosRun &&
-                m_fields->wantDeafenOnNextStartPosRun) {
+                m_fields->wantDeafenOnNextStartPosRun &&
+                !m_fields->startPosRedeafenHandledThisRun) {
 
                 log::info("AutoDeafen: re-deafening on StartPos respawn");
-            if (triggerDeafen()) {
-                // Mark that we've already deafened this attempt,
-                // so we do NOT press again at the threshold.
-                m_fields->hasDeafenedThisAttempt = true;
-            }
-            m_fields->wantDeafenOnNextStartPosRun = false;
+
+                if (triggerDeafen()) {
+                    // Mark that we've already deafened this attempt,
+                    // so we do NOT press again at the threshold.
+                    m_fields->hasDeafenedThisAttempt         = true;
+                    m_fields->startPosRedeafenHandledThisRun = true;
                 }
+                // Consume the flag so we don't keep re-deafening on further respawns
+                m_fields->wantDeafenOnNextStartPosRun = false;
+            }
+        }
+
+        // --- Track whether we've actually moved beyond spawn percent ---
+        if (m_fields->initializedRun) {
+            float curPercent = this->getCurrentPercent();
+            if (!m_fields->hasProgressedBeyondSpawn &&
+                curPercent > m_fields->initialPercentForAttempt + 0.01f) {
+                m_fields->hasProgressedBeyondSpawn = true;
+            }
         }
 
         // --- Respect practice and startpos settings for new deafen actions ---
@@ -194,7 +223,7 @@ public:
 
         // Threshold from settings
         double threshold =
-        Mod::get()->getSettingValue<double>("deafen-percent");
+            Mod::get()->getSettingValue<double>("deafen-percent");
         float thresholdF = static_cast<float>(threshold);
 
         if (percent >= thresholdF) {
@@ -215,10 +244,20 @@ public:
     // ---- Exact undeafen-on-death hook ----
     // This is called when the player dies.
     void destroyPlayer(PlayerObject* player, GameObject* object) {
-        log::info("AutoDeafen: destroyPlayer (death) called");
+        log::info(
+            "AutoDeafen: destroyPlayer (death) called - hasDeafened={}, deathHandled={}, progressedBeyondSpawn={}",
+            m_fields->hasDeafenedThisAttempt,
+            m_fields->deathHandledThisAttempt,
+            m_fields->hasProgressedBeyondSpawn
+        );
 
-        if (m_fields->cachedUndeafenOnDeath &&
-            m_fields->hasDeafenedThisAttempt) {
+        // Avoid running undeafen logic multiple times for the same attempt.
+        if (!m_fields->deathHandledThisAttempt &&
+            m_fields->cachedUndeafenOnDeath &&
+            m_fields->hasDeafenedThisAttempt &&
+            m_fields->hasProgressedBeyondSpawn) {
+
+            m_fields->deathHandledThisAttempt = true;
 
             if (m_fields->isStartPosRun && m_fields->cachedActiveInStartPos) {
                 // StartPos: undeafen exactly on death and schedule re-deafen
@@ -235,19 +274,16 @@ public:
                 log::info("AutoDeafen: normal run - undeafening on death");
                 triggerDeafen();
             }
-            }
+        }
 
-            // Always call the original behavior
-            PlayLayer::destroyPlayer(player, object);
+        // Always call the original behavior
+        PlayLayer::destroyPlayer(player, object);
     }
 
     void resetLevel() {
         log::info("AutoDeafen: resetLevel called");
 
-        // IMPORTANT: no toggling here anymore. This is purely state reset.
-        // For StartPos runs, re-deafen will happen in postUpdate() at the
-        // beginning of the next attempt if wantDeafenOnNextStartPosRun is set.
-
+        // Purely state reset for the next attempt.
         resetAttemptState();
 
         PlayLayer::resetLevel();
@@ -256,8 +292,7 @@ public:
     void levelComplete() {
         log::info("AutoDeafen: levelComplete – resetting state");
 
-        // On completion, we just clear all state. If you ever want different
-        // behavior (e.g. auto-undeafen on completion) we can add a setting.
+        // On completion, we just clear all state.
         resetAttemptState();
         m_fields->wantDeafenOnNextStartPosRun = false;
 
