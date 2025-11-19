@@ -19,7 +19,6 @@ bool sendHelperCommand(const char* cmd) {
         return false;
     }
 
-    // Ensure WSACleanup is called on all exit paths
     bool success = false;
     SOCKET sock  = INVALID_SOCKET;
 
@@ -110,18 +109,17 @@ public:
 class $modify(MyPlayLayer, PlayLayer) {
 public:
     struct Fields {
-        bool hasDeafenedThisAttempt      = false; // we deafened at least once this attempt
-        bool initializedRun              = false; // sampled initial percent yet
-        bool isStartPosRun               = false; // this attempt started from > 0%
-        bool wantDeafenOnNextStartPosRun = false; // re-deafen immediately on next StartPos respawn
+        // Per-attempt state
+        bool hasDeafenedThisAttempt   = false; // we deafened at least once this attempt
+        bool initializedRun           = false; // sampled initial percent yet
+        bool isStartPosRun            = false; // this attempt started from > 0%
 
-        // Anti-spam / classification
-        bool deathHandledThisAttempt         = false; // ensure undeafen-on-death runs once
-        bool startPosRedeafenHandledThisRun  = false; // ensure StartPos re-deafen runs once
-
-        // New: detect "real" progress vs. spawn/teleport behavior
+        // For “real death” detection
         float initialPercentForAttempt = 0.0f;
         bool  hasProgressedBeyondSpawn = false;
+
+        // Anti-spam: only undeafen once per attempt
+        bool deathHandledThisAttempt   = false;
 
         // Cached settings (updated each run)
         bool cachedActiveInPractice = false;
@@ -139,15 +137,13 @@ public:
     }
 
     void resetAttemptState() {
-        m_fields->hasDeafenedThisAttempt      = false;
-        m_fields->initializedRun              = false;
-        m_fields->isStartPosRun               = false;
-        m_fields->deathHandledThisAttempt     = false;
-        m_fields->startPosRedeafenHandledThisRun = false;
-        m_fields->initialPercentForAttempt    = 0.0f;
-        m_fields->hasProgressedBeyondSpawn    = false;
-        // NOTE: we intentionally do NOT reset wantDeafenOnNextStartPosRun here;
-        // it is used across attempts (set on death, consumed on next StartPos respawn).
+        m_fields->hasDeafenedThisAttempt   = false;
+        m_fields->initializedRun           = false;
+        m_fields->isStartPosRun            = false;
+        m_fields->initialPercentForAttempt = 0.0f;
+        m_fields->hasProgressedBeyondSpawn = false;
+        m_fields->deathHandledThisAttempt  = false;
+        // Nothing persists across attempts here; settings are re-read on first frame
     }
 
     void postUpdate(float dt) {
@@ -169,24 +165,6 @@ public:
                 initialPercent,
                 m_fields->isStartPosRun
             );
-
-            // StartPos re-deafen on respawn (one time per attempt)
-            if (m_fields->cachedActiveInStartPos &&
-                m_fields->isStartPosRun &&
-                m_fields->wantDeafenOnNextStartPosRun &&
-                !m_fields->startPosRedeafenHandledThisRun) {
-
-                log::info("AutoDeafen: re-deafening on StartPos respawn");
-
-                if (triggerDeafen()) {
-                    // Mark that we've already deafened this attempt,
-                    // so we do NOT press again at the threshold.
-                    m_fields->hasDeafenedThisAttempt         = true;
-                    m_fields->startPosRedeafenHandledThisRun = true;
-                }
-                // Consume the flag so we don't keep re-deafening on further respawns
-                m_fields->wantDeafenOnNextStartPosRun = false;
-            }
         }
 
         // --- Track whether we've actually moved beyond spawn percent ---
@@ -210,8 +188,7 @@ public:
             return;
         }
 
-        // If we've already deafened this attempt (either at threshold or at respawn),
-        // do nothing further.
+        // If we've already deafened this attempt, do nothing further.
         if (m_fields->hasDeafenedThisAttempt) {
             return;
         }
@@ -241,7 +218,7 @@ public:
         }
     }
 
-    // ---- Exact undeafen-on-death hook ----
+    // ---- Undeafen-on-death hook ----
     // This is called when the player dies.
     void destroyPlayer(PlayerObject* player, GameObject* object) {
         log::info(
@@ -251,7 +228,11 @@ public:
             m_fields->hasProgressedBeyondSpawn
         );
 
-        // Avoid running undeafen logic multiple times for the same attempt.
+        // Avoid running undeafen logic multiple times for the same attempt,
+        // and only undeafen if:
+        //  - the setting is enabled
+        //  - we actually deafened earlier in this attempt
+        //  - we progressed beyond the spawn percent (avoid spawn/teleport fake deaths)
         if (!m_fields->deathHandledThisAttempt &&
             m_fields->cachedUndeafenOnDeath &&
             m_fields->hasDeafenedThisAttempt &&
@@ -259,21 +240,8 @@ public:
 
             m_fields->deathHandledThisAttempt = true;
 
-            if (m_fields->isStartPosRun && m_fields->cachedActiveInStartPos) {
-                // StartPos: undeafen exactly on death and schedule re-deafen
-                // on next StartPos respawn.
-                log::info(
-                    "AutoDeafen: StartPos run - undeafening on death and "
-                    "scheduling re-deafen on respawn"
-                );
-                if (triggerDeafen()) {
-                    m_fields->wantDeafenOnNextStartPosRun = true;
-                }
-            } else {
-                // Normal run: just undeafen exactly on death.
-                log::info("AutoDeafen: normal run - undeafening on death");
-                triggerDeafen();
-            }
+            log::info("AutoDeafen: undeafening on real death");
+            triggerDeafen();
         }
 
         // Always call the original behavior
@@ -294,7 +262,6 @@ public:
 
         // On completion, we just clear all state.
         resetAttemptState();
-        m_fields->wantDeafenOnNextStartPosRun = false;
 
         PlayLayer::levelComplete();
     }
