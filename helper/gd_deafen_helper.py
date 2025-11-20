@@ -12,8 +12,11 @@ PORT = 44555
 YDOTOOL_SOCKET = "/tmp/.ydotool_socket"
 os.environ["YDOTOOL_SOCKET"] = YDOTOOL_SOCKET
 
-# correct numeric keycodes for ctrl+shift+d:
-#   29:1 42:1 32:1 32:0 42:0 29:0
+
+# this is where you will change your keybind.
+# refer to the linux evdev key codes to figure out what to put here.
+# make sure for every keyon signal there is a keyoff signal, or else this will not work.
+# I will try to make a better solution for this!! Thank you for bearing with me......
 COMMANDS = {
     "DEAFEN": [
         "ydotool", "key",
