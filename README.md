@@ -44,7 +44,7 @@ sudo make install
 ```
 ## Setup
 - Drag the .geode file into your geode mods folder.
-- Enter the `/helper` folder, and run the provided python script in sudo:
+- Run the provided python script in sudo:
 ```bash
 # ./gd_deafen_helper.py
 ```
