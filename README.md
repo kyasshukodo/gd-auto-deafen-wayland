@@ -13,7 +13,6 @@ The Megahack & Geode auto-deafen do not work in Geometry Dash on wayland. This i
 The purpose of the python helper and geode mod are to create a bridge between your geometry dash client and the wayland compositor.
 ## Dependencies
 
-### System Requirements
 - **Python 3** is needed for the helper script.
 - **ydotool** and **ydotoold** are needed to process the keybinds for discord.
 
@@ -44,12 +43,30 @@ make
 sudo make install
 ```
 ## Setup
-
-Just make sure the python script is running with sudo:
+- Drag the .geode file into your geode mods folder.
+- Run the python script in sudo:
 ```bash
 # ./gd_deafen_helper.py
 ```
 If the geode mod is properly installed in your game, it will check for a port connection anytime you enter the main menu. If it cannot ping the listener through the port, a pop-up will appear in your main menu alerting you so.
+
+## Change Keybind
+
+- Open `helper/gd_deafen_helper.py`.
+- Find the `COMMANDS["DEAFEN"]` entry and replace the numeric key sequence with your desired combo.
+- Use `1` for key down and `0` for key up. Common codes would be: `Ctrl=29`, `Shift=42`, `D=32`, `M=50`.
+- Example (Ctrl+Shift+M):
+	```python
+	COMMANDS = {
+			"DEAFEN": [
+					"ydotool", "key",
+					"29:1", "42:1", "50:1", "50:0", "42:0", "29:0"
+			],
+	}
+	```
+- Restart the helper after saving changes.
+> [!NOTE]
+> ydotool uses linux evdev key codes to specify what keys are to be pressed.
 
 
 ## Features
@@ -58,8 +75,6 @@ If the geode mod is properly installed in your game, it will check for a port co
 * Undeafen on pause
 * Auto-managing ydotoold daemon within helper
 
-There is currently no baked in feature to change the keybind, you must change the keybind in the helper script yourself.
+I hope to implement in-game keybind mapping in the future.
 
 <img src="logo.png" width="150" alt="the mod's logo" />
-
-*Update logo.png to change your mod's icon (please)*
