@@ -9,11 +9,9 @@
 
 using namespace geode::prelude;
 
-// ---------------- Networking helper ----------------
-
+// sends commands to the python helper over tcp
 bool sendHelperCommand(const char* cmd) {
     WSADATA wsaData;
-    // Winsock 1.x init
     if (WSAStartup(MAKEWORD(1, 1), &wsaData) != 0) {
         log::error("AutoDeafen: WSAStartup failed");
         return false;
@@ -41,7 +39,6 @@ bool sendHelperCommand(const char* cmd) {
             break;
         }
 
-        // Send just the command and a newline, e.g. "DEAFEN\n"
         std::string line = cmd;
         line.push_back('\n');
 
@@ -69,7 +66,6 @@ bool sendHelperCommand(const char* cmd) {
     return success;
 }
 
-// Trigger deafen / undeafen (toggle in Discord)
 bool triggerDeafen() {
     bool ok = sendHelperCommand("DEAFEN");
     if (ok) {
@@ -80,8 +76,6 @@ bool triggerDeafen() {
     return ok;
 }
 
-// ---------------- MenuLayer hook (ready indicator) ----------------
-
 class $modify(MyMenuLayer, MenuLayer) {
 public:
     bool init() {
@@ -91,37 +85,39 @@ public:
 
         log::info("AutoDeafen: MyMenuLayer::init (mod loaded)");
 
-        auto winSize = CCDirector::get()->getWinSize();
-        auto label   = CCLabelBMFont::create("AutoDeafen: Ready", "bigFont.fnt");
-        if (label) {
-            label->setPosition(winSize / 2);
-            this->addChild(label);
+        // test connectivity to python helper
+        bool helperConnected = sendHelperCommand("PING");
+        
+        if (!helperConnected) {
+            log::error("AutoDeafen: failed to connect to helper on startup");
+            
+            // show error notification to user
+            Notification::create(
+                "AutoDeafen: Cannot connect to helper\n"
+                "Make sure the Python helper is running on port 44555",
+                NotificationIcon::Error,
+                5.0f
+            )->show();
         } else {
-            log::warn("AutoDeafen: failed to create Ready label");
+            log::info("AutoDeafen: helper connectivity test passed");
         }
 
         return true;
     }
 };
 
-// ---------------- PlayLayer hook ----------------
-
 class $modify(MyPlayLayer, PlayLayer) {
 public:
     struct Fields {
-        // Per-attempt state
-        bool hasDeafenedThisAttempt   = false; // we deafened at least once this attempt
-        bool initializedRun           = false; // sampled initial percent yet
-        bool isStartPosRun            = false; // this attempt started from > 0%
+        bool hasDeafenedThisAttempt   = false;
+        bool initializedRun           = false;
+        bool isStartPosRun            = false;
 
-        // For “real death” detection
+        // tracks whether player actually moved to detect real deaths vs spawn teleports
         float initialPercentForAttempt = 0.0f;
         bool  hasProgressedBeyondSpawn = false;
+        bool  deathHandledThisAttempt  = false;
 
-        // Anti-spam: only undeafen once per attempt
-        bool deathHandledThisAttempt   = false;
-
-        // Cached settings (updated each run)
         bool cachedActiveInPractice = false;
         bool cachedActiveInStartPos = false;
         bool cachedUndeafenOnDeath  = false;
@@ -143,15 +139,13 @@ public:
         m_fields->initialPercentForAttempt = 0.0f;
         m_fields->hasProgressedBeyondSpawn = false;
         m_fields->deathHandledThisAttempt  = false;
-        // Nothing persists across attempts here; settings are re-read on first frame
     }
 
     void postUpdate(float dt) {
         PlayLayer::postUpdate(dt);
 
-        // --- Classify this attempt on the first frame ---
+        // initialize attempt state on first frame
         if (!m_fields->initializedRun) {
-            // Refresh settings at the start of each attempt
             refreshSettings();
 
             float initialPercent = this->getCurrentPercent();
@@ -167,7 +161,6 @@ public:
             );
         }
 
-        // --- Track whether we've actually moved beyond spawn percent ---
         if (m_fields->initializedRun) {
             float curPercent = this->getCurrentPercent();
             if (!m_fields->hasProgressedBeyondSpawn &&
@@ -176,31 +169,20 @@ public:
             }
         }
 
-        // --- Respect practice and startpos settings for new deafen actions ---
-
-        // If disabled in practice and this is a practice run, do nothing.
         if (!m_fields->cachedActiveInPractice && this->m_isPracticeMode) {
             return;
         }
 
-        // If disabled in startpos runs and this attempt started from >0%, do nothing.
         if (!m_fields->cachedActiveInStartPos && m_fields->isStartPosRun) {
             return;
         }
 
-        // If we've already deafened this attempt, do nothing further.
         if (m_fields->hasDeafenedThisAttempt) {
             return;
         }
 
-        // --- Percent-based deafen logic ---
-
-        // Current level percent (0–100)
         float percent = this->getCurrentPercent();
-
-        // Threshold from settings
-        double threshold =
-            Mod::get()->getSettingValue<double>("deafen-percent");
+        double threshold = Mod::get()->getSettingValue<double>("deafen-percent");
         float thresholdF = static_cast<float>(threshold);
 
         if (percent >= thresholdF) {
@@ -218,8 +200,6 @@ public:
         }
     }
 
-    // ---- Undeafen-on-death hook ----
-    // This is called when the player dies.
     void destroyPlayer(PlayerObject* player, GameObject* object) {
         log::info(
             "AutoDeafen: destroyPlayer (death) called - hasDeafened={}, deathHandled={}, progressedBeyondSpawn={}",
@@ -228,11 +208,7 @@ public:
             m_fields->hasProgressedBeyondSpawn
         );
 
-        // Avoid running undeafen logic multiple times for the same attempt,
-        // and only undeafen if:
-        //  - the setting is enabled
-        //  - we actually deafened earlier in this attempt
-        //  - we progressed beyond the spawn percent (avoid spawn/teleport fake deaths)
+        // only undeafen on actual deaths not spawn teleports
         if (!m_fields->deathHandledThisAttempt &&
             m_fields->cachedUndeafenOnDeath &&
             m_fields->hasDeafenedThisAttempt &&
@@ -244,25 +220,18 @@ public:
             triggerDeafen();
         }
 
-        // Always call the original behavior
         PlayLayer::destroyPlayer(player, object);
     }
 
     void resetLevel() {
         log::info("AutoDeafen: resetLevel called");
-
-        // Purely state reset for the next attempt.
         resetAttemptState();
-
         PlayLayer::resetLevel();
     }
 
     void levelComplete() {
         log::info("AutoDeafen: levelComplete – resetting state");
-
-        // On completion, we just clear all state.
         resetAttemptState();
-
         PlayLayer::levelComplete();
     }
 };
