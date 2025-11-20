@@ -2,7 +2,7 @@
 
 **The python helper, geode mod, and (obviously) ydotool are only expected to function in a Linux environment with the Wayland compositor, running Geometry Dash through wine. This mod will _NOT_ work on x11!**
 
-If you're looking for a windows-native compatible auto-deafen, see: [Lynxdeer AutoDeafen](https://github.com/Lynxdeer/AutoDeafen)
+If you're running windows and are looking for a windows-native compatible auto-deafen, see: [Lynxdeer AutoDeafen](https://github.com/Lynxdeer/AutoDeafen)
 
 <sub>It is also important to note that this has only been tested on Arch Linux in the KDE Plasma environment, but I suspect most environments on wayland should work ok. </sub>
 
