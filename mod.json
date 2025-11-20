@@ -1,10 +1,10 @@
 {
   "id": "kyasshukodo.gd-auto-deafen-wayland",
-  "name": "GD Auto Deafen (Wayland)",
-  "version": "1.0.0",
+  "name": "Auto Deafen (Wayland)",
+  "version": "0.1.0-alpha",
 
   "developer": "kyasshukodo",
-  "description": "Automatically deafens Discord when you reach a configurable percent in a Geometry Dash level, using a Wayland helper and Geode mod integration.",
+  "description": "Brings autodeafen support to wayland by utilizing a dedicated geode mod alongside an external python helper script.",
 
   "geode": "4.9.0",
 
@@ -20,7 +20,7 @@
     "deafen-percent": {
       "type": "float",
       "name": "Deafen at percent",
-      "description": "When reached in a level, send DEAFEN to the helper.",
+      "description": "Send the DEAFEN toggle to the helper once the % threshold is reached in an attempt.",
       "default": 5,
       "min": 0,
       "max": 100,
